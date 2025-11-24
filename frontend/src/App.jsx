@@ -7,13 +7,13 @@ import ConfirmModal from './ConfirmModal';
 import ReportModal from './ReportModal';
 import LogoutModal from './LogoutModal';
 
+const API_URL = 'http://localhost:5000/api/todos';
+
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [todos, setTodos] = useState([
-    { id: 1, title: 'Belajar React', description: 'Pelajari komponen dan hooks', start_date: '2023-10-01', end_date: '2023-10-05', done: false },
-    { id: 2, title: 'Buat API', description: 'Setup backend dengan Express', start_date: '2023-10-02', end_date: '2023-10-10', done: false }
-  ]);
+  const [todos, setTodos] = useState([]);
+  const [user, setUser] = useState(null);
   const [editingTodo, setEditingTodo] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -24,13 +24,38 @@ function App() {
   const audioRef = useRef(null);
 
   useEffect(() => {
+    // Check if user is already logged in
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      const userData = JSON.parse(savedUser);
+      setUser(userData);
+      setIsLoggedIn(true);
+      fetchTodos(userData.id);
+    }
+  }, []);
+
+  useEffect(() => {
     if (isLoggedIn && audioRef.current) {
       audioRef.current.play().catch(err => console.log('Autoplay blocked:', err));
     }
   }, [isLoggedIn]);
 
-  const handleLogin = () => {
+  const fetchTodos = async (userId) => {
+    try {
+      const response = await fetch(`${API_URL}?user_id=${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setTodos(data);
+      }
+    } catch (error) {
+      console.error('Error fetching todos:', error);
+    }
+  };
+
+  const handleLogin = (userData) => {
+    setUser(userData);
     setIsLoading(true);
+    fetchTodos(userData.id);
   };
 
   const handleSplashFinish = () => {
@@ -38,21 +63,69 @@ function App() {
     setIsLoggedIn(true);
   };
 
-  const addTodo = (todo) => {
+  const addTodo = async (todo) => {
     if (!todo.start_date || !todo.end_date) {
       alert('isi dulu jir ￣へ￣');
       return;
     }
-    setTodos([...todos, { ...todo, id: Date.now(), done: false }]);
+    if (!user) return;
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...todo,
+          user_id: user.id,
+        }),
+      });
+
+      if (response.ok) {
+        const newTodo = await response.json();
+        setTodos([...todos, { ...newTodo, done: newTodo.completed }]);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Gagal menambah todo');
+      }
+    } catch (error) {
+      console.error('Error adding todo:', error);
+      alert('Terjadi kesalahan saat menambah todo');
+    }
   };
 
-  const updateTodo = (id, updatedTodo) => {
+  const updateTodo = async (id, updatedTodo) => {
     if (!updatedTodo.start_date || !updatedTodo.end_date) {
       alert('isi dulu jir ￣へ￣');
       return;
     }
-    setTodos(todos.map(t => t.id === id ? { ...t, ...updatedTodo } : t));
-    setEditingTodo(null);
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id,
+          ...updatedTodo,
+          completed: updatedTodo.completed || false,
+        }),
+      });
+
+      if (response.ok) {
+        const updated = await response.json();
+        setTodos(todos.map(t => t.id === id ? { ...updated, done: updated.completed } : t));
+        setEditingTodo(null);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Gagal mengupdate todo');
+      }
+    } catch (error) {
+      console.error('Error updating todo:', error);
+      alert('Terjadi kesalahan saat mengupdate todo');
+    }
   };
 
   const deleteTodo = (id) => {
@@ -61,9 +134,23 @@ function App() {
     setIsModalOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (pendingDeleteId) {
-      setTodos(todos.filter(t => t.id !== pendingDeleteId));
+      try {
+        const response = await fetch(`${API_URL}?id=${pendingDeleteId}`, {
+          method: 'DELETE',
+        });
+
+        if (response.ok) {
+          setTodos(todos.filter(t => t.id !== pendingDeleteId));
+        } else {
+          const data = await response.json();
+          alert(data.error || 'Gagal menghapus todo');
+        }
+      } catch (error) {
+        console.error('Error deleting todo:', error);
+        alert('Terjadi kesalahan saat menghapus todo');
+      }
     }
     setIsModalOpen(false);
     setPendingDeleteId(null);
@@ -74,11 +161,39 @@ function App() {
     setPendingDeleteId(null);
   };
 
-  const markAsDone = (id) => {
-    setTodos(todos.map(t => t.id === id ? { ...t, done: true } : t));
-    setTimeout(() => {
-      setTodos(todos.filter(t => t.id !== id));
-    }, 500);
+  const markAsDone = async (id) => {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id,
+          title: todo.title,
+          description: todo.description || '',
+          start_date: todo.start_date,
+          end_date: todo.end_date,
+          completed: true,
+        }),
+      });
+
+      if (response.ok) {
+        setTodos(todos.map(t => t.id === id ? { ...t, done: true, completed: true } : t));
+        setTimeout(() => {
+          setTodos(todos.filter(t => t.id !== id));
+        }, 500);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Gagal menandai todo sebagai selesai');
+      }
+    } catch (error) {
+      console.error('Error marking todo as done:', error);
+      alert('Terjadi kesalahan');
+    }
   };
 
   const handleLogout = () => {
@@ -86,6 +201,9 @@ function App() {
   };
 
   const confirmLogout = () => {
+    localStorage.removeItem('user');
+    setUser(null);
+    setTodos([]);
     setIsLoggedIn(false);
     setIsLogoutModalOpen(false);
     if (audioRef.current) {
